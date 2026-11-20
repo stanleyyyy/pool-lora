@@ -4,7 +4,7 @@
 .receiver_peers.json
 .offloader_pairings.json
 
-# Secrets (copy secrets.example.yaml to secrets.yaml)
+# Secrets (setup.bat / setup.sh writes secrets.yaml)
 secrets.yaml
 secrets.yml
 

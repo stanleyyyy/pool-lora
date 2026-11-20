@@ -118,9 +118,9 @@ setup.bat
 ```
 
 On Linux or macOS run `./setup.sh`. Setup creates `.venv`, installs the
-pinned packages and copies `secrets.example.yaml` to `secrets.yaml`; edit that
-with your Wi-Fi and Home Assistant API values. Running it again only updates
-what is missing.
+pinned packages and, if there is none, writes a `secrets.yaml` with a freshly
+generated API encryption key; put your Wi-Fi details in it. Running it again
+only updates what is missing.
 
 | script | what it does |
 | --- | --- |

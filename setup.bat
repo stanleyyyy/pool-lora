@@ -22,8 +22,8 @@ echo Installing ESPHome and Device Builder ...
 ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt || exit /b 1
 
 if not exist "secrets.yaml" (
-    copy /y "secrets.example.yaml" "secrets.yaml" >nul
-    echo Created secrets.yaml - edit it with your Wi-Fi and API values before flashing the receiver.
+    ".venv\Scripts\python.exe" -c "import base64,os; k=base64.b64encode(os.urandom(32)).decode(); open('secrets.yaml','w').write('wifi_ssid: \"your-ssid\"\nwifi_password: \"your-wifi-password\"\nfallback_password: \"fallback-ap-password\"\napi_encryption_key: \"%%s\"\nota_password: \"\"\n' %% k)" || exit /b 1
+    echo Created secrets.yaml with a new API encryption key - put your Wi-Fi details in it before flashing the receiver.
 )
 
 ".venv\Scripts\esphome.exe" version
