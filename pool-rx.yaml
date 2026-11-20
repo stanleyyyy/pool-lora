@@ -167,9 +167,10 @@ sx126x:
           id(pool_lost_count).publish_state(id(lost_count));
           uint32_t total = id(rx_count) + id(lost_count);
           id(pool_loss).publish_state(100.0f * id(lost_count) / total);
-          // Wall-clock time of this packet; Home Assistant shows it as a live "x ago".
-          auto now = id(ha_time).now();
-          if (now.is_valid()) id(pool_last_rx).publish_state(now.timestamp);
+          // Wall-clock time of this packet as ISO 8601 text; Home Assistant shows it as a
+          // live "x ago". Not a numeric sensor: a float holds a Unix time only to ~128 s.
+          auto now = id(ha_time).utcnow();
+          if (now.is_valid()) id(pool_last_rx).publish_state(now.strftime("%Y-%m-%dT%H:%M:%S+00:00"));
 
 sensor:
   - platform: template
@@ -233,12 +234,6 @@ sensor:
     accuracy_decimals: 1
     entity_category: diagnostic
 
-  - platform: template
-    id: pool_last_rx
-    name: "LoRa last packet"
-    device_class: timestamp
-    entity_category: diagnostic
-
   - platform: wifi_signal
     name: "Wi-Fi signal"
     update_interval: 60s
@@ -247,6 +242,13 @@ sensor:
 time:
   - platform: homeassistant
     id: ha_time
+
+text_sensor:
+  - platform: template
+    id: pool_last_rx
+    name: "LoRa last packet"
+    device_class: timestamp
+    entity_category: diagnostic
 
 binary_sensor:
   - platform: template
