@@ -1,0 +1,151 @@
+# Pool temperature LoRa receiver -> Home Assistant
+# Board: Seeed XIAO ESP32S3 & Wio-SX1262 kit (868 MHz), USB powered, Wi-Fi + ESPHome API.
+#
+# Receives 6-byte packets from pool-tx.yaml:
+#   [0] 0x50 'P'   [1] sensor id   [2..3] temperature, int16 LE, 0.01 degC
+#   [4..5] battery, uint16 LE, mV
+#
+# LoRa settings MUST match pool-tx.yaml exactly.
+#
+# !!! Wio-SX1262 pin mapping: the kit exists in two mechanical versions.
+#   - Board-to-board (B2B) connector between XIAO and Wio  -> use the "B2B" pins (default below)
+#   - Wio plugged on the XIAO pin headers                   -> use the "header" pins (commented)
+#   Check which one you received and adjust the substitutions.
+
+substitutions:
+  name: pool-lora-rx
+  friendly_name: "LoRa RX"
+  sensor_id: "0x01"
+
+  # --- B2B connector version (Meshtastic "seeed_xiao_s3" mapping) ---
+  lora_sck: GPIO7
+  lora_miso: GPIO8
+  lora_mosi: GPIO9
+  lora_nss: GPIO41
+  lora_rst: GPIO42
+  lora_dio1: GPIO39
+  lora_busy: GPIO40
+  lora_rxen: GPIO38
+  # --- Pin-header version (Seeed pinout image: D0=DIO1 D1=BUSY D2=RST D3=NSS D4=RF_SW) ---
+  # lora_sck: GPIO7    # D8
+  # lora_miso: GPIO8   # D9
+  # lora_mosi: GPIO9   # D10
+  # lora_nss: GPIO4    # D3
+  # lora_rst: GPIO3    # D2
+  # lora_dio1: GPIO1   # D0
+  # lora_busy: GPIO2   # D1
+  # lora_rxen: GPIO5   # D4 (RF_SW)
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: 600
+    then:
+      - output.turn_on: lora_rx_enable
+
+esp32:
+  board: seeed_xiao_esp32s3
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${name}-fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: ${lora_sck}
+  miso_pin: ${lora_miso}
+  mosi_pin: ${lora_mosi}
+
+output:
+  # RF switch / RX enable on the Wio-SX1262 - keep high so the receive path is selected.
+  - platform: gpio
+    pin: ${lora_rxen}
+    id: lora_rx_enable
+
+sx126x:
+  id: lora
+  cs_pin: ${lora_nss}
+  rst_pin: ${lora_rst}
+  busy_pin: ${lora_busy}
+  dio1_pin: ${lora_dio1}
+  hw_version: sx1262
+  rf_switch: true          # DIO2 drives the antenna switch
+  tcxo_voltage: 1_8V
+  tcxo_delay: 5ms
+  frequency: 868100000
+  modulation: LORA
+  bandwidth: 125_0kHz
+  spreading_factor: 9
+  coding_rate: CR_4_5
+  preamble_size: 8
+  sync_value: [0x14, 0x24] # private LoRa network
+  crc_enable: true
+  rx_start: true
+  on_packet:
+    then:
+      - lambda: |-
+          if (x.size() != 6 || x[0] != 0x50 || x[1] != ${sensor_id}) {
+            ESP_LOGD("pool", "Ignored packet, %u bytes", (unsigned) x.size());
+            return;
+          }
+          int16_t c = (int16_t) (x[2] | (x[3] << 8));
+          uint16_t mv = (uint16_t) (x[4] | (x[5] << 8));
+          id(pool_temp).publish_state(c / 100.0f);
+          if (mv > 0) id(pool_battery).publish_state(mv / 1000.0f);
+          id(pool_rssi).publish_state(rssi);
+          id(pool_snr).publish_state(snr);
+
+sensor:
+  - platform: template
+    id: pool_temp
+    name: "Teplota v baz\u00E9ne"
+    unit_of_measurement: "\u00B0C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+
+  - platform: template
+    id: pool_battery
+    name: "Bat\u00E9ria senzora"
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+
+  - platform: template
+    id: pool_rssi
+    name: "LoRa RSSI"
+    unit_of_measurement: "dBm"
+    device_class: signal_strength
+    state_class: measurement
+    entity_category: diagnostic
+
+  - platform: template
+    id: pool_snr
+    name: "LoRa SNR"
+    unit_of_measurement: "dB"
+    state_class: measurement
+    entity_category: diagnostic
+
+  - platform: wifi_signal
+    name: "Wi-Fi signal"
+    update_interval: 60s
+    entity_category: diagnostic

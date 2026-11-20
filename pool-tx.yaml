@@ -1,0 +1,151 @@
+# Pool temperature LoRa transmitter (battery, in the float)
+# Board: Seeed XIAO nRF52840 & Wio-SX1262 kit (868 MHz), ESPHome nRF52 (Zephyr) platform.
+# Needs a recent ESPHome (nRF52 hardware SPI support - 2026.11 or dev).
+#
+# Every ${sleep_time}: power the NTC divider, read NTC + battery, send one 6-byte LoRa packet,
+# put the SX1262 to sleep, sleep the nRF52840. No Wi-Fi, no API; update over USB.
+#
+# Packet: [0] 0x50 'P'  [1] sensor id  [2..3] temp int16 LE (0.01 degC)  [4..5] battery uint16 LE (mV)
+#
+# Wiring (XIAO pin -> nRF pin):
+#   NTC divider:  D6 (P1.11) -> 47k -> D0 (P0.02 / AIN0) -> 50k NTC -> GND
+#                 (optional 100 nF from D0 to GND helps the ADC with the high-impedance divider)
+#   LiPo:         BAT+ / BAT- pads on the XIAO underside
+# Wio-SX1262 (nRF kit pinout): D1 DIO1, D2 RST, D3 BUSY, D4 NSS, D5 RF_SW, D8 SCK, D9 MISO, D10 MOSI
+
+substitutions:
+  name: pool-lora-tx
+  sensor_id: "0x01"
+  sleep_time: 30s # 10min
+
+esphome:
+  name: ${name}
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: measure_and_send
+
+nrf52:
+  board: xiao_ble   # XIAO nRF52840; default bootloader = Adafruit UF2 with SoftDevice S140 v7
+
+logger:
+  level: INFO       # set to NONE for the final low-power build
+
+spi:
+  clk_pin: P1.13    # D8
+  miso_pin: P1.14   # D9
+  mosi_pin: P1.15   # D10
+
+output:
+  - platform: gpio
+    pin: P1.11      # D6 - powers the NTC divider only while measuring
+    id: ntc_power
+  - platform: gpio
+    pin: P0.05      # D5 - Wio RF_SW / RX enable, kept low (transmit only)
+    id: lora_rx_enable
+  - platform: gpio
+    pin: P0.14      # XIAO VBAT_ENABLE - low connects the battery divider to P0.31
+    id: vbat_enable
+    inverted: true  # turn_on() drives it LOW
+  - platform: gpio
+    pin: P0.06      # XIAO on-board RGB LED, blue channel (active low)
+    id: tx_led
+    inverted: true
+
+sx126x:
+  id: lora
+  cs_pin: P0.04     # D4 NSS
+  rst_pin: P0.28    # D2
+  busy_pin: P0.29   # D3
+  dio1_pin: P0.03   # D1
+  hw_version: sx1262
+  rf_switch: true   # DIO2 drives the antenna switch
+  tcxo_voltage: 1_8V
+  tcxo_delay: 5ms
+  frequency: 868100000
+  modulation: LORA
+  bandwidth: 125_0kHz
+  spreading_factor: 9
+  coding_rate: CR_4_5
+  preamble_size: 8
+  sync_value: [0x14, 0x24]
+  crc_enable: true
+  pa_power: 14      # EU 868.0-868.6 MHz limit is 25 mW ERP
+  rx_start: false   # transmitter never listens
+
+sensor:
+  # NTC divider: same parts and maths as the ESP32-C6 build
+  - platform: adc
+    pin: AIN0       # D0 / P0.02
+    id: ntc_adc
+    update_interval: never
+  - platform: resistance
+    sensor: ntc_adc
+    id: ntc_resistance
+    configuration: DOWNSTREAM
+    resistor: 47kOhm
+    reference_voltage: 3.3V
+  - platform: ntc
+    sensor: ntc_resistance
+    id: pool_temp
+    calibration:
+      b_constant: 3950
+      reference_temperature: 24C
+      reference_resistance: 48.43kOhm
+
+  # Battery: XIAO nRF52840 divider 1M / 510k on P0.31 (AIN7)
+  - platform: adc
+    pin: AIN7
+    id: vbat
+    update_interval: never
+    filters:
+      - multiply: 2.961
+
+deep_sleep:
+  id: sleep_ctrl
+  sleep_duration: ${sleep_time}
+  # no run_duration: sleep is entered only from the script below
+
+script:
+  - id: measure_and_send
+    mode: single
+    then:
+      - while:
+          condition:
+            lambda: "return true;"
+          then:
+            # --- measure ---
+            - output.turn_on: vbat_enable
+            - output.turn_on: ntc_power
+            - delay: 10ms
+            - component.update: ntc_adc
+            - component.update: vbat
+            - output.turn_off: ntc_power
+            - output.turn_off: vbat_enable
+            # --- send ---
+            - if:
+                condition:
+                  lambda: "return !std::isnan(id(pool_temp).state);"
+                then:
+                  - logger.log:
+                      format: "Sending %.2f C, battery %.2f V"
+                      args: ["id(pool_temp).state", "id(vbat).state"]
+                  - output.turn_on: tx_led   # short blue flash while transmitting
+                  - sx126x.send_packet:
+                      id: lora
+                      data: !lambda |-
+                        int16_t c = (int16_t) lroundf(id(pool_temp).state * 100.0f);
+                        float v = id(vbat).state;
+                        uint16_t mv = std::isnan(v) ? 0 : (uint16_t) lroundf(v * 1000.0f);
+                        return std::vector<uint8_t>{
+                          0x50, ${sensor_id},
+                          (uint8_t) (c & 0xFF), (uint8_t) ((c >> 8) & 0xFF),
+                          (uint8_t) (mv & 0xFF), (uint8_t) ((mv >> 8) & 0xFF)};
+                  - delay: 300ms   # SF9 airtime for 6 bytes is ~200 ms
+                  - output.turn_off: tx_led
+                  - delay: 200ms
+            # --- sleep ---
+            - sx126x.set_mode_sleep:
+                id: lora
+            - deep_sleep.enter: sleep_ctrl
+            # On nRF52 a timed deep sleep returns here (no reboot), so the loop repeats.

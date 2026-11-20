@@ -1,0 +1,30 @@
+# ESPHome build output and Device Builder state
+.esphome/
+.device-builder*
+.receiver_peers.json
+.offloader_pairings.json
+
+# Secrets (copy secrets.example.yaml to secrets.yaml)
+secrets.yaml
+secrets.yml
+
+# Local Python environment
+.venv/
+__pycache__/
+*.py[cod]
+
+# Built firmware (produced by flash-tx / esphome compile)
+firmware/
+*.uf2
+*.hex
+*.zip
+
+# Logs
+*.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
