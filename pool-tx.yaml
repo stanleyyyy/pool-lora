@@ -2,10 +2,11 @@
 # Board: Seeed XIAO nRF52840 & Wio-SX1262 kit (868 MHz), ESPHome nRF52 (Zephyr) platform.
 # Needs a recent ESPHome (nRF52 hardware SPI support - 2026.11 or dev).
 #
-# Every ${sleep_time}: power the NTC divider, read NTC + battery, send one 6-byte LoRa packet,
+# Every ${sleep_time}: power the NTC divider, read NTC + battery, send one 7-byte LoRa packet,
 # put the SX1262 to sleep, sleep the nRF52840. No Wi-Fi, no API; update over USB.
 #
 # Packet: [0] 0x50 'P'  [1] sensor id  [2..3] temp int16 LE (0.01 degC)  [4..5] battery uint16 LE (mV)
+#         [6] sequence number, +1 per packet, lets the receiver count lost packets
 #
 # Wiring (XIAO pin -> nRF pin):
 #   NTC divider:  D6 (P1.11) -> 47k -> D0 (P0.02 / AIN0) -> 50k NTC -> GND
@@ -30,6 +31,12 @@ nrf52:
 
 logger:
   level: INFO       # set to NONE for the final low-power build
+
+globals:
+  - id: tx_seq      # survives the timed deep sleep (it doesn't reboot on nRF52)
+    type: uint8_t
+    restore_value: false
+    initial_value: "0"
 
 spi:
   clk_pin: P1.13    # D8
@@ -128,8 +135,8 @@ script:
                   lambda: "return !std::isnan(id(pool_temp).state);"
                 then:
                   - logger.log:
-                      format: "Sending %.2f C, battery %.2f V"
-                      args: ["id(pool_temp).state", "id(vbat).state"]
+                      format: "Sending #%u: %.2f C, battery %.2f V"
+                      args: ["(unsigned) id(tx_seq)", "id(pool_temp).state", "id(vbat).state"]
                   - output.turn_on: tx_led   # short blue flash while transmitting
                   - sx126x.send_packet:
                       id: lora
@@ -140,8 +147,10 @@ script:
                         return std::vector<uint8_t>{
                           0x50, ${sensor_id},
                           (uint8_t) (c & 0xFF), (uint8_t) ((c >> 8) & 0xFF),
-                          (uint8_t) (mv & 0xFF), (uint8_t) ((mv >> 8) & 0xFF)};
-                  - delay: 300ms   # SF9 airtime for 6 bytes is ~200 ms
+                          (uint8_t) (mv & 0xFF), (uint8_t) ((mv >> 8) & 0xFF),
+                          id(tx_seq)};
+                  - lambda: "id(tx_seq)++;"
+                  - delay: 300ms   # SF9 airtime for 7 bytes is ~200 ms
                   - output.turn_off: tx_led
                   - delay: 200ms
             # --- sleep ---

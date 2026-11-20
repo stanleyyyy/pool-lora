@@ -1,9 +1,12 @@
 # Pool temperature LoRa receiver -> Home Assistant
 # Board: Seeed XIAO ESP32S3 & Wio-SX1262 kit (868 MHz), USB powered, Wi-Fi + ESPHome API.
 #
-# Receives 6-byte packets from pool-tx.yaml:
+# Receives packets from pool-tx.yaml:
 #   [0] 0x50 'P'   [1] sensor id   [2..3] temperature, int16 LE, 0.01 degC
-#   [4..5] battery, uint16 LE, mV
+#   [4..5] battery, uint16 LE, mV   [6] sequence number (optional, used to count lost packets)
+#
+# Link quality entities: RSSI, SNR, link margin (SNR above the SF9 demodulation limit),
+# packets received / lost, packet loss, time since the last packet and an online indicator.
 #
 # LoRa settings MUST match pool-tx.yaml exactly.
 #
@@ -16,6 +19,9 @@ substitutions:
   name: pool-lora-rx
   friendly_name: "LoRa RX"
   sensor_id: "0x01"
+  # Mark the pool sensor offline when no packet arrived for this many seconds
+  # (a bit more than two transmit intervals of pool-tx.yaml).
+  offline_after_s: "1500"
 
   # --- B2B connector version (Meshtastic "seeed_xiao_s3" mapping) ---
   lora_sck: GPIO7
@@ -67,7 +73,33 @@ api:
 
 ota:
   - platform: esphome
+    # OTA uploads are encrypted with the API encryption key above (no separate password).
+    encryption:
+      # One-time migration: the receiver still runs firmware that asks for the old OTA
+      # password, so this install goes up in plaintext with that password. Once it is
+      # installed, remove allow_plaintext_upload and the password line below.
+      allow_plaintext_upload: true
     password: !secret ota_password
+
+web_server:
+  port: 80
+  version: 2
+  include_internal: false
+  ota: false   # no plaintext firmware upload page; updates go through encrypted OTA
+
+globals:
+  - id: last_seq
+    type: int
+    initial_value: "-1"
+  - id: rx_count
+    type: uint32_t
+    initial_value: "0"
+  - id: lost_count
+    type: uint32_t
+    initial_value: "0"
+  - id: last_rx_ms
+    type: uint32_t
+    initial_value: "0"
 
 spi:
   clk_pin: ${lora_sck}
@@ -102,16 +134,40 @@ sx126x:
   on_packet:
     then:
       - lambda: |-
-          if (x.size() != 6 || x[0] != 0x50 || x[1] != ${sensor_id}) {
-            ESP_LOGD("pool", "Ignored packet, %u bytes", (unsigned) x.size());
+          if ((x.size() != 6 && x.size() != 7) || x[0] != 0x50 || x[1] != ${sensor_id}) {
+            ESP_LOGD("pool", "Ignored packet, %u bytes, RSSI %.0f dBm", (unsigned) x.size(), rssi);
             return;
           }
           int16_t c = (int16_t) (x[2] | (x[3] << 8));
           uint16_t mv = (uint16_t) (x[4] | (x[5] << 8));
+
+          // Lost packets from the gap in the 8-bit sequence number. A jump backwards
+          // or a gap of more than half the range means the transmitter restarted.
+          if (x.size() == 7) {
+            int seq = x[6];
+            if (id(last_seq) >= 0) {
+              int gap = (seq - id(last_seq) - 1 + 256) % 256;
+              if (gap > 0 && gap < 128) id(lost_count) += gap;
+            }
+            id(last_seq) = seq;
+          }
+          id(rx_count)++;
+          id(last_rx_ms) = millis();
+
+          ESP_LOGI("pool", "Packet #%d: %.2f C, %.2f V, RSSI %.0f dBm, SNR %.1f dB",
+                   id(last_seq), c / 100.0f, mv / 1000.0f, rssi, snr);
           id(pool_temp).publish_state(c / 100.0f);
           if (mv > 0) id(pool_battery).publish_state(mv / 1000.0f);
           id(pool_rssi).publish_state(rssi);
           id(pool_snr).publish_state(snr);
+          // SF9 demodulates down to about -12.5 dB SNR; the margin above that is
+          // what is left before packets start to drop.
+          id(pool_link_margin).publish_state(snr + 12.5f);
+          id(pool_rx_count).publish_state(id(rx_count));
+          id(pool_lost_count).publish_state(id(lost_count));
+          uint32_t total = id(rx_count) + id(lost_count);
+          id(pool_loss).publish_state(100.0f * id(lost_count) / total);
+          id(pool_last_rx_age).publish_state(0);
 
 sensor:
   - platform: template
@@ -145,7 +201,61 @@ sensor:
     state_class: measurement
     entity_category: diagnostic
 
+  - platform: template
+    id: pool_link_margin
+    name: "LoRa link margin"
+    unit_of_measurement: "dB"
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+
+  - platform: template
+    id: pool_rx_count
+    name: "LoRa packets received"
+    state_class: total_increasing
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  - platform: template
+    id: pool_lost_count
+    name: "LoRa packets lost"
+    state_class: total_increasing
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
+  - platform: template
+    id: pool_loss
+    name: "LoRa packet loss"
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 1
+    entity_category: diagnostic
+
+  - platform: template
+    id: pool_last_rx_age
+    name: "LoRa last packet"
+    unit_of_measurement: "s"
+    device_class: duration
+    state_class: measurement
+    accuracy_decimals: 0
+    entity_category: diagnostic
+
   - platform: wifi_signal
     name: "Wi-Fi signal"
     update_interval: 60s
     entity_category: diagnostic
+
+interval:
+  # Keeps "last packet" counting up between packets.
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (id(last_rx_ms) != 0)
+            id(pool_last_rx_age).publish_state((millis() - id(last_rx_ms)) / 1000);
+
+binary_sensor:
+  - platform: template
+    name: "Senzor online"
+    device_class: connectivity
+    lambda: |-
+      return id(last_rx_ms) != 0 && (millis() - id(last_rx_ms)) < ${offline_after_s} * 1000UL;

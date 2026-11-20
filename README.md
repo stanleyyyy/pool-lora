@@ -75,7 +75,7 @@ substitutions, commented out.
 | Sync word | `0x14 0x24` (private network) |
 | TX power | 14 dBm |
 
-Packet, 6 bytes, little-endian:
+Packet, 7 bytes, little-endian:
 
 | byte | content |
 | --- | --- |
@@ -83,9 +83,26 @@ Packet, 6 bytes, little-endian:
 | 1 | sensor id (`0x01`) |
 | 2–3 | temperature, `int16`, 0.01 °C |
 | 4–5 | battery voltage, `uint16`, mV |
+| 6 | sequence number, +1 per packet |
 
-The receiver ignores anything that doesn't match, and publishes temperature,
-battery voltage, RSSI and SNR to Home Assistant.
+The receiver ignores anything that doesn't match (a 6-byte packet from older
+transmitter firmware is still accepted) and publishes to Home Assistant:
+
+| entity | |
+| --- | --- |
+| Teplota v bazéne | pool temperature |
+| Batéria senzora | transmitter battery voltage |
+| LoRa RSSI, LoRa SNR | of the last packet |
+| LoRa link margin | SNR above the SF9 demodulation limit (about −12.5 dB); how much worse the link can get before packets drop |
+| LoRa packets received / lost, LoRa packet loss | from gaps in the sequence number since the receiver started |
+| LoRa last packet | seconds since the last packet |
+| Senzor online | off when nothing arrived for `offline_after_s` (25 min) |
+
+The receiver also serves the ESPHome web page on port 80. Its firmware upload
+page is turned off; updates go through OTA, which is encrypted with the API
+key. `pool-rx.yaml` still carries a one-time `allow_plaintext_upload` plus the
+old OTA password so a receiver flashed with the password-only firmware can
+take the first encrypted image; remove both once that install is done.
 
 ## Getting started
 
