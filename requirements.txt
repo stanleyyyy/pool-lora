@@ -1,0 +1,3 @@
+# Tested versions. nRF52 hardware SPI (needed by pool-tx.yaml) arrived in ESPHome 2026.11.
+esphome==2026.11.0
+esphome-device-builder==1.28.1

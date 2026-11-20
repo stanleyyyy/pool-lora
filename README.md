@@ -89,23 +89,33 @@ battery voltage, RSSI and SNR to Home Assistant.
 
 ## Getting started
 
-Requires ESPHome 2026.11 or newer (nRF52 hardware SPI).
+Needs Python 3.11 or newer. Everything else lives in a local `.venv`, created
+by the setup script from `requirements.txt`, which pins the tested ESPHome
+(2026.11.0, the first release with nRF52 hardware SPI) and ESPHome Device
+Builder versions.
 
 ```bat
-python -m venv .venv
-.venv\Scripts\pip install esphome esphome-device-builder
-copy secrets.example.yaml secrets.yaml
+git clone https://github.com/stanleyyyy/pool-lora
+cd pool-lora
+setup.bat
 ```
 
-Edit `secrets.yaml`, then:
+On Linux or macOS run `./setup.sh`. Setup creates `.venv`, installs the
+pinned packages and copies `secrets.example.yaml` to `secrets.yaml`; edit that
+with your Wi-Fi and Home Assistant API values. Running it again only updates
+what is missing.
 
 | script | what it does |
 | --- | --- |
+| `setup.bat` / `setup.sh` | creates `.venv`, installs `requirements.txt`, creates `secrets.yaml` |
 | `dashboard.bat` | starts ESPHome Device Builder on http://localhost:6052 for this folder |
 | `flash-tx.bat` | builds `pool-tx.yaml` and copies the `.uf2` onto the XIAO nRF52840 bootloader drive |
 
-The receiver flashes like any ESP32: `esphome run pool-rx.yaml`, then OTA from
-then on. If the factory Meshtastic firmware blocks the first flash, hold **B**
+`dashboard.bat` and `flash-tx.bat` run the setup themselves when `.venv` is
+missing, so a fresh clone works by double-clicking either of them.
+
+The receiver flashes like any ESP32, `.venv\Scripts\esphome run pool-rx.yaml`,
+and takes updates over the air from then on. If the factory Meshtastic firmware blocks the first flash, hold **B**
 while plugging in USB to enter the ESP32-S3 download mode.
 
 ### Flashing the nRF52840
