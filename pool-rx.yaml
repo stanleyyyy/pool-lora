@@ -167,7 +167,9 @@ sx126x:
           id(pool_lost_count).publish_state(id(lost_count));
           uint32_t total = id(rx_count) + id(lost_count);
           id(pool_loss).publish_state(100.0f * id(lost_count) / total);
-          id(pool_last_rx_age).publish_state(0);
+          // Wall-clock time of this packet; Home Assistant shows it as a live "x ago".
+          auto now = id(ha_time).now();
+          if (now.is_valid()) id(pool_last_rx).publish_state(now.timestamp);
 
 sensor:
   - platform: template
@@ -232,12 +234,9 @@ sensor:
     entity_category: diagnostic
 
   - platform: template
-    id: pool_last_rx_age
+    id: pool_last_rx
     name: "LoRa last packet"
-    unit_of_measurement: "s"
-    device_class: duration
-    state_class: measurement
-    accuracy_decimals: 0
+    device_class: timestamp
     entity_category: diagnostic
 
   - platform: wifi_signal
@@ -245,13 +244,9 @@ sensor:
     update_interval: 60s
     entity_category: diagnostic
 
-interval:
-  # Keeps "last packet" counting up between packets.
-  - interval: 30s
-    then:
-      - lambda: |-
-          if (id(last_rx_ms) != 0)
-            id(pool_last_rx_age).publish_state((millis() - id(last_rx_ms)) / 1000);
+time:
+  - platform: homeassistant
+    id: ha_time
 
 binary_sensor:
   - platform: template

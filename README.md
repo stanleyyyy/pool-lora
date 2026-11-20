@@ -95,7 +95,7 @@ transmitter firmware is still accepted) and publishes to Home Assistant:
 | LoRa RSSI, LoRa SNR | of the last packet |
 | LoRa link margin | SNR above the SF9 demodulation limit (about −12.5 dB); how much worse the link can get before packets drop |
 | LoRa packets received / lost, LoRa packet loss | from gaps in the sequence number since the receiver started |
-| LoRa last packet | seconds since the last packet |
+| LoRa last packet | time of the last packet, shown by Home Assistant as a live "x ago" |
 | Senzor online | off when nothing arrived for `offline_after_s` (25 min) |
 
 The receiver also serves the ESPHome web page on port 80. Its firmware upload
