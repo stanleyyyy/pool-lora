@@ -28,3 +28,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# SolidCraft lock files
+.~*.lock
