@@ -22,9 +22,12 @@ substitutions:
 esphome:
   name: ${name}
   on_boot:
-    priority: -100
-    then:
-      - script.execute: measure_and_send
+    - priority: 800
+      then:
+        - output.turn_on: charge_fast   # P0.13 low: BQ25101 charges at 100 mA, not 50 mA
+    - priority: -100
+      then:
+        - script.execute: measure_and_send
 
 nrf52:
   board: xiao_ble   # XIAO nRF52840; default bootloader = Adafruit UF2 with SoftDevice S140 v7
@@ -53,6 +56,10 @@ output:
   - platform: gpio
     pin: P0.14      # XIAO VBAT_ENABLE - low connects the battery divider to P0.31
     id: vbat_enable
+    inverted: true  # turn_on() drives it LOW
+  - platform: gpio
+    pin: P0.13      # XIAO charge-current select (HICHG): low = 100 mA, high/default = 50 mA
+    id: charge_fast
     inverted: true  # turn_on() drives it LOW
   - platform: gpio
     pin: P0.06      # XIAO on-board RGB LED, blue channel (active low)
